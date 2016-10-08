@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <schema xmlns="http://www.w3.org/2001/XMLSchema"
-  xmlns:tns="http://www.jooq.org/xsd/jooq-codegen-3.6.0.xsd"
-  targetNamespace="http://www.jooq.org/xsd/jooq-codegen-3.6.0.xsd"
+  xmlns:tns="http://www.jooq.org/xsd/jooq-codegen-3.8.0.xsd"
+  targetNamespace="http://www.jooq.org/xsd/jooq-codegen-3.8.0.xsd"
   elementFormDefault="qualified">
 
   <element name="configuration">
@@ -9,19 +9,36 @@
       <all>
 
         <!--
+          The logging configuration element specifies the code generation
+          logging threshold. 
+          -->
+        <element name="logging" type="tns:Logging" minOccurs="0" maxOccurs="1" />
+
+        <!--
           The JDBC configuration element contains information about how
-          to set up the database connection used for source code generation
+          to set up the database connection used for source code generation.
           -->
         <element name="jdbc" type="tns:Jdbc" minOccurs="0"  maxOccurs="1" />
 
         <!--
           The GENERATOR configuration element contains information about
-          source code generation itself
+          source code generation itself.
           -->
         <element name="generator" type="tns:Generator" minOccurs="1" maxOccurs="1" />
       </all>
     </complexType>
   </element>
+  
+  <simpleType name="Logging">
+    <restriction base="string">
+      <enumeration value="TRACE"/>
+      <enumeration value="DEBUG"/>
+      <enumeration value="INFO"/>
+      <enumeration value="WARN"/>
+      <enumeration value="ERROR"/>
+      <enumeration value="FATAL"/>
+    </restriction>
+  </simpleType>
 
   <complexType name="Jdbc">
     <all>
@@ -39,6 +56,12 @@
         GRANTs to the dictionary views/tables to generate the desired artefacts
         -->
       <element name="user" type="string" minOccurs="0" maxOccurs="1" />
+
+      <!--
+        Just a synonym for "user" to be compatible with other Maven plugins
+        -->
+      <element name="username" type="string" minOccurs="0" maxOccurs="1" />
+      
 
       <!-- The JDBC connection password -->
       <element name="password" type="string" minOccurs="0" maxOccurs="1" />
@@ -318,6 +341,7 @@
             org.jooq.util.derby.DerbyDatabase
             org.jooq.util.firebird.FirebirdDatabase
             org.jooq.util.h2.H2Database
+            org.jooq.util.hana.HanaDatabse
             org.jooq.util.hsqldb.HSQLDBDatabase
             org.jooq.util.informix.InformixDatabase
             org.jooq.util.ingres.IngresDatabase
@@ -325,9 +349,11 @@
             org.jooq.util.mysql.MySQLDatabase
             org.jooq.util.oracle.OracleDatabase
             org.jooq.util.postgres.PostgresDatabase
+            org.jooq.util.redshift.RedshiftDatabase
             org.jooq.util.sqlite.SQLiteDatabaes
             org.jooq.util.sqlserver.SQLServerDatabase
             org.jooq.util.sybase.SybaseDatabase
+            org.jooq.util.vertica.VerticaDatabase
 
         This value can be used to reverse-engineer generic JDBC DatabaseMetaData (e.g. for MS Access)
 
@@ -388,6 +414,15 @@
         columns within tables.
         -->
       <element name="includeExcludeColumns" type="boolean" default="false" minOccurs="0" maxOccurs="1" />
+      
+      <element name="includeTables" type="boolean" default="true" minOccurs="0" maxOccurs="1" />
+      <element name="includeRoutines" type="boolean" default="true" minOccurs="0" maxOccurs="1" />
+      <element name="includePackages" type="boolean" default="true" minOccurs="0" maxOccurs="1" />
+      <element name="includeUDTs" type="boolean" default="true" minOccurs="0" maxOccurs="1" />
+      <element name="includeSequences" type="boolean" default="true" minOccurs="0" maxOccurs="1" />
+      <element name="includePrimaryKeys" type="boolean" default="true" minOccurs="0" maxOccurs="1" />
+      <element name="includeUniqueKeys" type="boolean" default="true" minOccurs="0" maxOccurs="1" />
+      <element name="includeForeignKeys" type="boolean" default="true" minOccurs="0" maxOccurs="1" />
 
       <!--
         All table and view columns that are used as "version" fields for
@@ -481,6 +516,23 @@
       <element name="schemaVersionProvider" type="string" default="" minOccurs="0" maxOccurs="1"/>
 
       <!--
+        A custom version number that, if available, will be used to assess whether the above
+        <inputSchema/> from a given catalog will need to be regenerated.
+
+        There are three operation modes for this element:
+
+        - The value is a class that can be found on the classpath and that implements
+          org.jooq.util.CatalogVersionProvider. Such classes must provide a default constructor
+        - The value is a SELECT statement that returns one record with one column. The
+          SELECT statement may contain a named variable called :catalog_name
+        - The value is a constant, such as a Maven property
+
+        Catalog versions will be generated into the javax.annotation.Generated annotation on
+        generated artefacts.
+        -->
+      <element name="catalogVersionProvider" type="string" default="" minOccurs="0" maxOccurs="1"/>
+
+      <!--
         The schema that is used in generated source code. This will be the
         production schema. Use this to override your local development
         schema name for source code generation. If not specified, this
@@ -520,6 +572,19 @@
         artefacts (e.g. in combination with enumTypes)
         -->
       <element name="forcedTypes" type="tns:ForcedTypes" minOccurs="0" maxOccurs="1"/>
+            
+      <!--
+        Whether table valued functions should be reported as tables.
+        
+        If this is deactivated, such functions are not generated as tables, but
+        as ordinary routines. This is particularly useful for backwards-
+        compatibility between jOOQ 3.8 and previous versions, when using TABLE
+        and VARRAY types in Oracle.
+        
+        While this flag defaults to true for most databases, it defaults to false
+        for Oracle.
+        -->
+      <element name="tableValuedFunctions" type="boolean" minOccurs="0" maxOccurs="1" />
     </all>
   </complexType>
 
@@ -597,8 +662,20 @@
 
   <complexType name="ForcedType">
     <all>
-      <!-- The name of the type to be forced upon various artefacts -->
+      <!-- The name of the type to be forced upon various artefacts. -->
       <element name="name" type="string" minOccurs="1" maxOccurs="1" />
+      
+      <!-- The type of the user type - e.g. java.time.LocalDateTime.
+      
+           If provided, <name/> will be ignored, and either <converter/>
+           or <binding/> is required -->
+      <element name="userType" type="string" minOccurs="0" maxOccurs="1" />
+
+      <!-- A converter implementation for the user type. -->
+      <element name="converter" type="string" minOccurs="0" maxOccurs="1" />
+
+      <!-- A binding implementation for the custom type. -->
+      <element name="binding" type="string" minOccurs="0" maxOccurs="1" />
 
       <!--
         A Java regular expression matching columns, parameters, attributes,
@@ -659,6 +736,11 @@
       <element name="pojosEqualsAndHashCode" type="boolean" default="false" minOccurs="0" maxOccurs="1" />
 
       <!--
+        Generate basic toString() methods in POJOs
+        -->
+      <element name="pojosToString" type="boolean" default="true" minOccurs="0" maxOccurs="1" />
+
+      <!--
         Generate immutable POJOs for usage of the ResultQuery.fetchInto(Class) API
         This overrides any value set in <pojos/>
         -->
@@ -688,6 +770,11 @@
       <element name="validationAnnotations" type="boolean" default="false" minOccurs="0" maxOccurs="1" />
 
       <!--
+        Annotate DAOs with useful spring annotations such as @Repository or @Autowired 
+        -->
+      <element name="springAnnotations" type="boolean" default="false" minOccurs="0" maxOccurs="1" />
+
+      <!--
         Allow to turn off the generation of ALL global object references, which include
 
         - Tables.java
@@ -710,7 +797,17 @@
       <element name="globalObjectReferences" type="boolean" default="true" minOccurs="0" maxOccurs="1" />
 
       <!--
-        Allow to turn off the generation of global table references in Tables.java
+        Allow to turn off the generation of global catalog references in Catalogs.java
+        -->
+      <element name="globalCatalogReferences" type="boolean" default="true" minOccurs="0" maxOccurs="1" />
+
+      <!--
+        Allow to turn off the generation of global schema references in Schemas.java and each catalog
+        -->
+      <element name="globalSchemaReferences" type="boolean" default="true" minOccurs="0" maxOccurs="1" />
+
+      <!--
+        Allow to turn off the generation of global table references in Tables.java and each schema
         -->
       <element name="globalTableReferences" type="boolean" default="true" minOccurs="0" maxOccurs="1" />
 
@@ -728,6 +825,26 @@
         Allow to turn off the generation of global table references in Routines.java
         -->
       <element name="globalRoutineReferences" type="boolean" default="true" minOccurs="0" maxOccurs="1" />
+
+      <!--
+        Allow to turn off the generation of global queue references in Queues.java 
+        -->
+      <element name="globalQueueReferences" type="boolean" default="true" minOccurs="0" maxOccurs="1" />
+
+      <!--
+        Allow to turn off the generation of global link references in Links.java 
+        -->
+      <element name="globalLinkReferences" type="boolean" default="true" minOccurs="0" maxOccurs="1" />
+
+      <!-- 
+        Allow to turn off the generation of queue related code 
+        -->
+      <element name="queues" type="boolean" default="true" minOccurs="0" maxOccurs="1" />
+
+      <!-- 
+        Allow to turn off the generation of link related code 
+        -->
+      <element name="links" type="boolean" default="true" minOccurs="0" maxOccurs="1" />
 
       <!--
         Generate fluent setters in
@@ -767,6 +884,9 @@
 
       <!-- The destination directory of your generated classes -->
       <element name="directory" type="string" default="target/generated-sources/jooq" />
+      
+      <!-- The file encoding to be used with all output files. -->
+      <element name="encoding" type="string" default="UTF-8"/>
     </all>
   </complexType>
 
@@ -788,3 +908,4 @@
     </restriction>
   </simpleType>
 </schema>
+
